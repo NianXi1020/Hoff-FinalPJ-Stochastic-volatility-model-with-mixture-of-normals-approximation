@@ -112,11 +112,13 @@ def plot_intraday_pattern(df, output_dir: Path, title_suffix: str = "sample") ->
     """绘制日内平均绝对收益，展示开盘收盘的高波动特征。"""
     _ensure_dir(output_dir)
     df_tmp = df.copy()
-    df_tmp["time_of_day"] = df_tmp["index"].dt.time
+    # 将时间戳转换为易于绘图的字符串，避免 matplotlib 处理 datetime.time 时出错
+    df_tmp["time_of_day"] = df_tmp["index"].dt.strftime("%H:%M")
     df_tmp["abs_r"] = df_tmp["r"].abs()
-    grouped = df_tmp.groupby("time_of_day")["abs_r"].mean()
+    grouped = df_tmp.groupby("time_of_day")["abs_r"].mean().sort_index()
 
     fig, ax = plt.subplots(figsize=(10, 4))
+    # 使用字符串标签作为 x 轴刻度，防止 datetime.time 类型导致的转换错误
     ax.plot(grouped.index, grouped.values, color="tab:green")
     ax.set_title(f"Intraday pattern of |returns| ({title_suffix})")
     ax.set_xlabel("Time of day")
