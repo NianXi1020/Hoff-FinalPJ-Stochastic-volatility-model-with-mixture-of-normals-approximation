@@ -1,5 +1,5 @@
 """主 MCMC 循环，包含进度打印。"""
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import numpy as np
 from numpy.random import default_rng
@@ -17,21 +17,17 @@ def run_mcmc_sv(
     thin: int = 1,
     rng_seed: int = 2025,
     progress_every: int = 20,
+    store_s: bool = True,
 ) -> Dict[str, np.ndarray]:
-    """
-    运行 SV 模型的 MCMC，并返回参数与波动路径样本。
-    默认迭代次数较小，方便快速演示；可根据需要调整。
-    """
+    """运行 SV 模型的 MCMC，并返回参数与波动路径样本。"""
     rng = default_rng(rng_seed)
     T = len(r)
 
-    # 初始化
     mu = 0.0
     alpha = 0.0
     beta = 0.9
     tau2 = 0.1
     h = np.full(T, np.log(np.var(r) + 1e-6))
-    # 初始化混合指标，7 个状态均匀随机
     s = rng.integers(low=0, high=len(Q), size=T)
 
     saved_mu: List[float] = []
@@ -39,18 +35,12 @@ def run_mcmc_sv(
     saved_beta: List[float] = []
     saved_tau2: List[float] = []
     saved_h: List[np.ndarray] = []
+    saved_s: List[np.ndarray] = []
 
     for it in range(1, n_iter + 1):
-        # 采样 h
         h = ffbs_sample_h(y_star, s, alpha, beta, tau2, rng)
-
-        # 采样混合指标 s
         s = sample_s(y_star, h, rng)
-
-        # 采样状态方程参数
         alpha, beta, tau2 = sample_alpha_beta_tau2(h, rng)
-
-        # 采样均值 mu
         mu = sample_mu(r, h, rng)
 
         if it % progress_every == 0:
@@ -64,11 +54,16 @@ def run_mcmc_sv(
             saved_beta.append(beta)
             saved_tau2.append(tau2)
             saved_h.append(h.copy())
+            if store_s:
+                saved_s.append(s.copy())
 
-    return {
+    results = {
         "mu": np.array(saved_mu),
         "alpha": np.array(saved_alpha),
         "beta": np.array(saved_beta),
         "tau2": np.array(saved_tau2),
         "h": np.array(saved_h),
     }
+    if store_s:
+        results["s"] = np.array(saved_s)
+    return results
