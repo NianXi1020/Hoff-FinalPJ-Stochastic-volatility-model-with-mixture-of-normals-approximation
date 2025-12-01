@@ -17,6 +17,8 @@ Key files:
 
 Run the notebook inside Jupyter, adjust the data directory and sampling
 parameters, and start with small subsets of the data (e.g., a single file or a
-few thousand rows) to keep runtime manageable. The batch helper
+few thousand rows) to keep runtime manageable. The notebook now writes its PNGs
+and parameter summaries into a timestamped folder under `outputs/` (e.g.,
+`outputs/SV_YYYYMMDD_HHMMSS/demo/`). The batch helper
 `run_batch_for_all_contracts` can loop over multiple CSVs, save parameter
 summaries, and emit all charts into timestamped folders for easier versioning.
