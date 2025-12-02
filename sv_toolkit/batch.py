@@ -5,7 +5,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
-from .data import list_csv_files, load_single_file
+from .data import get_contract_symbol_from_path, list_csv_files, load_single_file
 from .mcmc import run_mcmc_sv
 from .plotting import (
     plot_acf_returns,
@@ -30,11 +30,8 @@ def make_timestamped_root(output_base: Path) -> Path:
 
 
 def extract_contract_tag(file_path: Path) -> str:
-    """从文件名中提取前两个英文字符作为合约 tag，避免中文标题。"""
-    stem = Path(file_path).stem
-    first_part = stem.split("_")[0]
-    tag = first_part[:2]
-    return tag or "XX"
+    """从文件名中提取合约英文代号，默认使用下划线前的部分并转为大写。"""
+    return get_contract_symbol_from_path(file_path)
 
 
 def save_param_summary(samples: Dict[str, np.ndarray], output_dir: Path, contract_tag: str, extra_info: Optional[Dict] = None) -> None:

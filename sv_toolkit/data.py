@@ -1,6 +1,6 @@
 """数据加载与预处理相关函数。所有注释均为中文，方便理解。"""
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -31,6 +31,17 @@ def list_csv_files(data_dir: Path, max_files: int = 5) -> List[Path]:
     if len(csv_files) > max_files:
         print(f"... ({len(csv_files) - max_files} more files not shown)")
     return csv_files
+
+
+def get_contract_symbol_from_path(file_path: Path) -> str:
+    """
+    根据文件名解析合约代号（下划线前的英文部分），并转换为大写。
+    例如 "AG_主力合约_1m数据.csv" -> "AG"，"A_主力合约_1m数据.csv" -> "A"。
+    若解析失败，则返回 "UNKNOWN"。
+    """
+    stem = Path(file_path).stem
+    first_part = stem.split("_")[0].upper()
+    return first_part or "UNKNOWN"
 
 
 def _filter_by_contract(df: pd.DataFrame, contract_code: Optional[str]) -> pd.DataFrame:
@@ -102,27 +113,30 @@ def load_single_file(
     return r, y_star, df_processed
 
 
-def load_dataset(
+def load_contracts_in_dir(
     data_dir: Path,
     contract_code: Optional[str] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     max_files: int = 1,
     max_rows_per_file: Optional[int] = None,
-) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+) -> Dict[str, Dict[str, Any]]:
     """
-    读取指定目录下的若干 CSV 文件，并将它们串联后计算 r 与 y_star。
-    默认只读取第一个文件，可以通过 max_files 控制数量，避免一次性载入过大数据。
+    按“合约”为粒度读取目录中的 CSV，返回以合约 symbol 为键的字典。
+
+    返回示例：
+    {
+        "AG": {"symbol": "AG", "file_path": Path(...), "r": np.ndarray, "y_star": np.ndarray, "df": DataFrame},
+        "A": {...},
+    }
     """
     csv_files = list_csv_files(data_dir, max_files=max_files)
     if not csv_files:
         raise FileNotFoundError(f"No csv files found under {data_dir}")
 
-    all_r: List[np.ndarray] = []
-    all_y: List[np.ndarray] = []
-    all_df: List[pd.DataFrame] = []
-
+    datasets: Dict[str, Dict[str, Any]] = {}
     for file_path in csv_files[:max_files]:
+        symbol = get_contract_symbol_from_path(file_path)
         r, y_star, df_processed = load_single_file(
             file_path,
             contract_code=contract_code,
@@ -130,12 +144,35 @@ def load_dataset(
             end_time=end_time,
             max_rows=max_rows_per_file,
         )
-        all_r.append(r)
-        all_y.append(y_star)
-        all_df.append(df_processed)
+        datasets[symbol] = {
+            "symbol": symbol,
+            "file_path": Path(file_path),
+            "r": r,
+            "y_star": y_star,
+            "df": df_processed,
+        }
 
-    concatenated_df = pd.concat(all_df, ignore_index=True)
-    concatenated_r = np.concatenate(all_r)
-    concatenated_y = np.concatenate(all_y)
-    print(f"Concatenated {len(all_df)} files, total length {len(concatenated_r)}")
-    return concatenated_r, concatenated_y, concatenated_df
+    print(f"Loaded {len(datasets)} contract(s): {list(datasets.keys())}")
+    return datasets
+
+
+def load_dataset(
+    data_dir: Path,
+    contract_code: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    max_files: int = 1,
+    max_rows_per_file: Optional[int] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    保留旧接口但不再串联不同合约，而是返回按 symbol 划分的字典。
+    建议新代码直接调用 load_contracts_in_dir。返回结构与 load_contracts_in_dir 相同。
+    """
+    return load_contracts_in_dir(
+        data_dir=data_dir,
+        contract_code=contract_code,
+        start_time=start_time,
+        end_time=end_time,
+        max_files=max_files,
+        max_rows_per_file=max_rows_per_file,
+    )
