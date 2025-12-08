@@ -1,9 +1,11 @@
-"""绘图函数，标题与图例使用英文。"""
+"""绘图函数，标题与图例使用英文，并处理时间轴空档问题。"""
+
 from pathlib import Path
 from typing import Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from scipy import stats
 
@@ -17,16 +19,74 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def plot_returns(df, output_dir: Path, title_suffix: str = "sample") -> Path:
-    """绘制收益率随时间变化图，保存 PNG 文件。"""
+def _prepare_axis(
+    time_index: pd.Series,
+    use_step_index: bool = True,
+    max_labels: int = 8,
+):
+    """构造横轴刻度与标签，默认使用交易步数避免时间空档导致的长直线。
+
+    返回 (x_axis, tick_locs, tick_labels)，供后续绘图函数统一使用。
+    """
+
+    times = pd.to_datetime(time_index)
+    n = len(times)
+    if n == 0:
+        return np.array([]), np.array([]), []
+
+    x_axis = np.arange(n) if use_step_index else times.to_numpy()
+    step = max(1, n // max_labels)
+    tick_locs = np.arange(0, n, step)
+    tick_labels = [times.iloc[i].strftime("%Y-%m-%d %H:%M") for i in tick_locs]
+    return x_axis, tick_locs, tick_labels
+
+
+def _iter_segments(
+    times: pd.Series, use_step_index: bool = True, max_gap_minutes: int = 180
+):
+    """按时间空档切分连续区间。use_step_index=True 时只返回全量切片。"""
+
+    if use_step_index:
+        yield slice(None)
+        return
+
+    ts = pd.to_datetime(times)
+    if len(ts) == 0:
+        return
+
+    gap = pd.Timedelta(minutes=max_gap_minutes)
+    start = 0
+    for i in range(len(ts) - 1):
+        if ts.iloc[i + 1] - ts.iloc[i] > gap:
+            yield slice(start, i + 1)
+            start = i + 1
+    yield slice(start, len(ts))
+
+
+def plot_returns(
+    df,
+    output_dir: Path,
+    title_suffix: str = "sample",
+    use_step_index: bool = True,
+    max_gap_minutes: int = 180,
+    max_xticks: int = 8,
+) -> Path:
+    """绘制收益率随时间变化图，默认使用交易步数横轴避免休市空档产生突变。"""
     _ensure_dir(output_dir)
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(df["index"], df["r"], color="tab:blue", linewidth=0.8, label="returns")
+
+    x_axis, tick_locs, tick_labels = _prepare_axis(
+        df["index"], use_step_index=use_step_index, max_labels=max_xticks
+    )
+    for seg in _iter_segments(df["index"], use_step_index=use_step_index, max_gap_minutes=max_gap_minutes):
+        ax.plot(x_axis[seg], df["r"].values[seg], color="tab:blue", linewidth=0.8, label="returns" if seg.start == 0 else None)
+
     ax.set_title(f"Returns over time ({title_suffix})")
-    ax.set_xlabel("Time")
+    ax.set_xlabel("Trading step" if use_step_index else "Time")
     ax.set_ylabel("Return")
     ax.legend()
-    fig.autofmt_xdate()
+    ax.set_xticks(x_axis[tick_locs])
+    ax.set_xticklabels(tick_labels, rotation=45, ha="right")
 
     output_path = output_dir / f"returns_{title_suffix}.png"
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -34,7 +94,15 @@ def plot_returns(df, output_dir: Path, title_suffix: str = "sample") -> Path:
     return output_path
 
 
-def plot_volatility(h_samples: np.ndarray, df, output_dir: Path, title_suffix: str = "sample") -> Path:
+def plot_volatility(
+    h_samples: np.ndarray,
+    df,
+    output_dir: Path,
+    title_suffix: str = "sample",
+    use_step_index: bool = True,
+    max_gap_minutes: int = 180,
+    max_xticks: int = 8,
+) -> Path:
     """使用后验均值与置信区间绘制条件波动率轨迹。"""
     _ensure_dir(output_dir)
     vol_mean = np.exp(h_samples.mean(axis=0) / 2)
@@ -42,14 +110,21 @@ def plot_volatility(h_samples: np.ndarray, df, output_dir: Path, title_suffix: s
     vol_high = np.exp(np.percentile(h_samples, 97.5, axis=0) / 2)
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    time_index = df["index"].values
-    ax.plot(time_index, vol_mean, color="tab:orange", label="Posterior mean volatility")
-    ax.fill_between(time_index, vol_low, vol_high, color="tab:orange", alpha=0.2, label="95% CI")
+    x_axis, tick_locs, tick_labels = _prepare_axis(
+        df["index"], use_step_index=use_step_index, max_labels=max_xticks
+    )
+    for seg in _iter_segments(df["index"], use_step_index=use_step_index, max_gap_minutes=max_gap_minutes):
+        ax.plot(x_axis[seg], vol_mean[seg], color="tab:orange", label="Posterior mean volatility" if seg.start == 0 else None)
+        ax.fill_between(
+            x_axis[seg], vol_low[seg], vol_high[seg], color="tab:orange", alpha=0.2, label="95% CI" if seg.start == 0 else None
+        )
+
     ax.set_title(f"Latent volatility ({title_suffix})")
-    ax.set_xlabel("Time")
+    ax.set_xlabel("Trading step" if use_step_index else "Time")
     ax.set_ylabel("Volatility")
     ax.legend()
-    fig.autofmt_xdate()
+    ax.set_xticks(x_axis[tick_locs])
+    ax.set_xticklabels(tick_labels, rotation=45, ha="right")
 
     output_path = output_dir / f"volatility_{title_suffix}.png"
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -159,23 +234,36 @@ def plot_param_posterior(samples: Dict[str, np.ndarray], output_dir: Path, title
     return output_path
 
 
-def plot_vol_and_abs_returns(h_samples: np.ndarray, df, output_dir: Path, title_suffix: str = "sample") -> Path:
+def plot_vol_and_abs_returns(
+    h_samples: np.ndarray,
+    df,
+    output_dir: Path,
+    title_suffix: str = "sample",
+    use_step_index: bool = True,
+    max_gap_minutes: int = 180,
+    max_xticks: int = 8,
+) -> Path:
     """将潜在波动率与绝对收益同图展示，突出聚集特征。"""
     _ensure_dir(output_dir)
     h_mean = h_samples.mean(axis=0)
     vol_mean = np.exp(h_mean / 2.0)
     abs_r = df["r"].abs().values
     scaled_abs_r = abs_r / np.median(abs_r)
-    time_index = df["index"].values
 
     fig, ax1 = plt.subplots(figsize=(10, 4))
-    ax1.plot(time_index, vol_mean, label="Posterior mean vol", color="tab:orange")
-    ax1.plot(time_index, scaled_abs_r, alpha=0.45, label="Scaled |returns|", color="tab:blue")
-    ax1.set_xlabel("Time")
+    x_axis, tick_locs, tick_labels = _prepare_axis(
+        df["index"], use_step_index=use_step_index, max_labels=max_xticks
+    )
+    for seg in _iter_segments(df["index"], use_step_index=use_step_index, max_gap_minutes=max_gap_minutes):
+        ax1.plot(x_axis[seg], vol_mean[seg], label="Posterior mean vol" if seg.start == 0 else None, color="tab:orange")
+        ax1.plot(x_axis[seg], scaled_abs_r[seg], alpha=0.45, label="Scaled |returns|" if seg.start == 0 else None, color="tab:blue")
+
+    ax1.set_xlabel("Trading step" if use_step_index else "Time")
     ax1.set_ylabel("Value")
     ax1.set_title(f"Volatility vs |returns| ({title_suffix})")
     ax1.legend()
-    fig.autofmt_xdate()
+    ax1.set_xticks(x_axis[tick_locs])
+    ax1.set_xticklabels(tick_labels, rotation=45, ha="right")
 
     fig.tight_layout()
     output_path = output_dir / f"vol_abs_{title_suffix}.png"

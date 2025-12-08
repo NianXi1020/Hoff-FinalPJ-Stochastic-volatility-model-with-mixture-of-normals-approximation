@@ -19,9 +19,11 @@ a subset of rows so that experiments stay lightweight.
 ## Key files
 
 - `notebooks/sv_mixture_demo.ipynb`: guided workflow with Chinese comments,
-  English print statements/plot labels, and progress prints. It demonstrates
-  per-contract loading, optional subsampling, MCMC, diagnostics, and exporting
-  PNGs/CSVs into timestamped folders.
+  English print statements/plot labels, and progress prints. It loads multiple
+  contracts in one run, loops over them with separate RNG seeds, and writes
+  each contract's outputs into its own subfolder under the timestamped root.
+  It demonstrates per-contract loading, optional subsampling, MCMC,
+  diagnostics, and exporting PNGs/CSVs.
 - `sv_toolkit/`: Python package with data loading, FFBS/MCMC samplers, plotting
   utilities, batch runners, and simple ARCH/GARCH benchmarks.
 - `outputs/`: auto-created folder for timestamped runs (e.g.,
@@ -44,7 +46,7 @@ a subset of rows so that experiments stay lightweight.
 ## Running multiple contracts
 
 - Use `sv_toolkit.data.load_contracts_in_dir` to return a dictionary keyed by
-  contract tag. Loop over it directly, or call
+  contract tag. Loop over it directly (as shown in the demo notebook), or call
   `sv_toolkit.batch.run_mcmc_for_multiple_contracts` to automate the per-
   contract loop in memory.
 - For disk-backed runs, `sv_toolkit.batch.run_batch_for_all_contracts` creates a
@@ -55,6 +57,8 @@ a subset of rows so that experiments stay lightweight.
   - `params_<tag>.csv` summarizing posterior mean/SD/quantiles for
     `mu, alpha, beta, tau2` (and `gamma` if you include a state covariate).
   - `run_info_<tag>.txt` capturing data size, sampler settings, and file name.
+  - PNGs use trading-step x-axes by default to avoid long straight lines across
+    weekend/night gaps; labels still show representative timestamps.
 
 ## Subsampling and state covariates
 
