@@ -65,6 +65,18 @@ def _filter_by_time(df: pd.DataFrame, start_time: Optional[pd.Timestamp], end_ti
     return df
 
 
+def _apply_subsampling(df: pd.DataFrame, sample_every: int) -> pd.DataFrame:
+    """
+    按照 sample_every 对原始 1 分钟数据做子采样，例如 sample_every=5 表示每隔
+    5 行保留一行，从而得到 5 分钟频率的序列，便于在长区间数据上快速试验。
+    """
+    if sample_every <= 1:
+        return df
+    df_sub = df.iloc[::sample_every].copy()
+    print(f"Applied subsampling: keep 1 row every {sample_every}, new length={len(df_sub)}")
+    return df_sub
+
+
 def compute_returns(df: pd.DataFrame, c: float = DEFAULT_C) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """
     根据 DataFrame 计算对数收益率 r_t 与 y_star = log(r_t^2 + c)。
@@ -89,10 +101,14 @@ def load_single_file(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     max_rows: Optional[int] = None,
-) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    sample_every: int = 1,
+    state_exog_col: Optional[str] = None,
+    log_exog: bool = True,
+) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame, Optional[np.ndarray]]:
     """
     读取单个 CSV，完成时间排序、合约筛选、时间窗口截取，并计算 r 与 y_star。
-    max_rows 参数可限制读取的行数，便于快速测试。
+    max_rows 参数可限制读取的行数，便于快速测试；sample_every 控制子采样间隔；
+    state_exog_col 则用于提取状态方程的外生变量（可选），若 log_exog=True 则做 log(x+1)。
     """
     file_path = Path(file_path)
     print(f"Loading file: {file_path}")
@@ -108,9 +124,25 @@ def load_single_file(
         df = df.head(max_rows)
         print(f"Restricted to first {max_rows} rows for quick demo")
 
+    df = _apply_subsampling(df, sample_every)
+
     r, y_star, df_processed = compute_returns(df)
+
+    exog: Optional[np.ndarray] = None
+    if state_exog_col is not None and state_exog_col in df_processed.columns:
+        exog_series = df_processed[state_exog_col].astype(float)
+        if log_exog:
+            exog_series = np.log(exog_series + 1.0)
+        exog = exog_series.to_numpy()
+        print(
+            f"Extracted exogenous series '{state_exog_col}' with length {len(exog)}; "
+            f"log_transform={log_exog}"
+        )
+    elif state_exog_col is not None:
+        print(f"Warning: column {state_exog_col} not found in {file_path.name}, skip exog")
+
     print(f"Finished computing returns with length {len(r)}")
-    return r, y_star, df_processed
+    return r, y_star, df_processed, exog
 
 
 def load_contracts_in_dir(
@@ -120,6 +152,9 @@ def load_contracts_in_dir(
     end_time: Optional[str] = None,
     max_files: int = 1,
     max_rows_per_file: Optional[int] = None,
+    sample_every: int = 1,
+    state_exog_col: Optional[str] = None,
+    log_exog: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
     """
     按“合约”为粒度读取目录中的 CSV，返回以合约 symbol 为键的字典。
@@ -137,12 +172,15 @@ def load_contracts_in_dir(
     datasets: Dict[str, Dict[str, Any]] = {}
     for file_path in csv_files[:max_files]:
         symbol = get_contract_symbol_from_path(file_path)
-        r, y_star, df_processed = load_single_file(
+        r, y_star, df_processed, exog = load_single_file(
             file_path,
             contract_code=contract_code,
             start_time=start_time,
             end_time=end_time,
             max_rows=max_rows_per_file,
+            sample_every=sample_every,
+            state_exog_col=state_exog_col,
+            log_exog=log_exog,
         )
         datasets[symbol] = {
             "symbol": symbol,
@@ -150,6 +188,7 @@ def load_contracts_in_dir(
             "r": r,
             "y_star": y_star,
             "df": df_processed,
+            "exog": exog,
         }
 
     print(f"Loaded {len(datasets)} contract(s): {list(datasets.keys())}")
@@ -163,6 +202,9 @@ def load_dataset(
     end_time: Optional[str] = None,
     max_files: int = 1,
     max_rows_per_file: Optional[int] = None,
+    sample_every: int = 1,
+    state_exog_col: Optional[str] = None,
+    log_exog: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
     """
     保留旧接口但不再串联不同合约，而是返回按 symbol 划分的字典。
@@ -175,4 +217,7 @@ def load_dataset(
         end_time=end_time,
         max_files=max_files,
         max_rows_per_file=max_rows_per_file,
+        sample_every=sample_every,
+        state_exog_col=state_exog_col,
+        log_exog=log_exog,
     )

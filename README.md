@@ -18,7 +18,10 @@ Key files:
 Data are loaded “per contract” rather than concatenated. Use
 `sv_toolkit.data.load_contracts_in_dir` to get a dictionary keyed by each
 contract symbol (parsed from the filename before the first underscore), so every
-contract can be sampled and saved independently.
+contract can be sampled and saved independently. You can also enable
+subsampling with `sample_every` (e.g., 5 for a 5-minute grid) and attach a
+state-covariate column (e.g., `volume`) to the state equation via
+`state_exog_col`, which will be returned in the dataset dictionary.
 
 Run the notebook inside Jupyter, adjust the data directory and sampling
 parameters, and start with small subsets of the data (e.g., a single file or a
@@ -27,3 +30,9 @@ and parameter summaries into a timestamped folder under `outputs/` (e.g.,
 `outputs/SV_YYYYMMDD_HHMMSS/demo/`). The batch helper
 `run_batch_for_all_contracts` can loop over multiple CSVs, save parameter
 summaries, and emit all charts into timestamped folders for easier versioning.
+For in-memory loops, call `run_mcmc_for_multiple_contracts` on the dictionary
+returned by `load_contracts_in_dir`.
+
+For benchmarks, `sv_toolkit.garch.fit_garch_11` and `fit_arch_q` wrap the
+`arch` package (if installed) to produce quick GARCH/ARCH fits on the same
+subsampled returns, letting you compare against the SV sampler.

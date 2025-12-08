@@ -68,9 +68,15 @@ def run_batch_for_all_contracts(
     data_dir: Path,
     output_base: Path = Path("outputs"),
     max_files: int = 5,
+    sample_every: int = 1,
+    state_exog_col: Optional[str] = None,
+    log_exog: bool = True,
     mcmc_kwargs: Optional[Dict] = None,
 ) -> Path:
-    """批量处理多个 CSV，每个合约单独输出参数与图像，返回根输出路径。"""
+    """批量处理多个 CSV，每个合约单独输出参数与图像，返回根输出路径。
+
+    支持子采样（sample_every）和在状态方程中使用的外生变量（state_exog_col）。
+    """
     data_dir = Path(data_dir)
     mcmc_kwargs = mcmc_kwargs or {}
 
@@ -84,13 +90,20 @@ def run_batch_for_all_contracts(
         contract_out_dir = root_out / contract_tag
         contract_out_dir.mkdir(parents=True, exist_ok=True)
 
-        r, y_star, df = load_single_file(file_path)
-        samples = run_mcmc_sv(r, y_star, **mcmc_kwargs)
+        r, y_star, df, exog = load_single_file(
+            file_path,
+            sample_every=sample_every,
+            state_exog_col=state_exog_col,
+            log_exog=log_exog,
+        )
+        samples = run_mcmc_sv(r, y_star, exog_state=exog, **mcmc_kwargs)
 
         extra_info = {
             "file_name": file_path.name,
             "contract_tag": contract_tag,
             "T": len(r),
+            "sample_every": sample_every,
+            "state_exog_col": state_exog_col,
             **{k: v for k, v in mcmc_kwargs.items()},
         }
         save_param_summary(samples, contract_out_dir, contract_tag, extra_info=extra_info)
@@ -108,3 +121,25 @@ def run_batch_for_all_contracts(
             plot_mixture_usage(samples["s"], output_dir=contract_out_dir, title_suffix=title_suffix)
 
     return root_out
+
+
+def run_mcmc_for_multiple_contracts(datasets: Dict[str, Dict], mcmc_kwargs: Optional[Dict] = None) -> Dict[str, Dict]:
+    """在内存中的合约字典上循环运行 MCMC，返回同样按 symbol 分类的结果。"""
+    mcmc_kwargs = mcmc_kwargs or {}
+    results: Dict[str, Dict] = {}
+
+    for symbol, contract_data in datasets.items():
+        r = contract_data["r"]
+        y_star = contract_data["y_star"]
+        exog = contract_data.get("exog")
+
+        print(f"Running MCMC for contract {symbol} with T={len(r)}")
+        try:
+            out = run_mcmc_sv(r, y_star, exog_state=exog, **mcmc_kwargs)
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"Skip {symbol} due to error: {exc}")
+            continue
+
+        results[symbol] = {"mcmc": out, "meta": {"symbol": symbol, "T": len(r)}}
+
+    return results

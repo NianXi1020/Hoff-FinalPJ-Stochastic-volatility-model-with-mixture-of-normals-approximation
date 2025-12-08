@@ -1,12 +1,29 @@
 """卡尔曼滤波与 FFBS 采样函数。"""
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 
 from .mixture import M, M0, V2
 
 
-def kalman_filter(y_star: np.ndarray, s: np.ndarray, alpha: float, beta: float, tau2: float) -> Dict[str, np.ndarray]:
+def _exog_term(exog: Optional[np.ndarray], gamma: Optional[np.ndarray], t: int) -> float:
+    """安全计算第 t 期外生项的线性部分，若未提供则返回 0。"""
+    if exog is None or gamma is None:
+        return 0.0
+    x_t = np.atleast_1d(exog[t])
+    g_vec = np.atleast_1d(gamma)
+    return float(np.dot(g_vec, x_t))
+
+
+def kalman_filter(
+    y_star: np.ndarray,
+    s: np.ndarray,
+    alpha: float,
+    beta: float,
+    tau2: float,
+    gamma: Optional[np.ndarray],
+    exog: Optional[np.ndarray],
+) -> Dict[str, np.ndarray]:
     """
     针对给定的混合指标 s 和参数 (alpha, beta, tau2)，执行一轮卡尔曼滤波。
     返回字典包含 a, P, a_pred, P_pred，便于 FFBS 使用。
@@ -29,7 +46,7 @@ def kalman_filter(y_star: np.ndarray, s: np.ndarray, alpha: float, beta: float, 
 
     for t in range(T):
         # 预测步骤
-        a_pred_t = alpha + beta * a_prev
+        a_pred_t = alpha + beta * a_prev + _exog_term(exog, gamma, t)
         P_pred_t = beta ** 2 * P_prev + tau2
 
         # 更新步骤
@@ -49,12 +66,21 @@ def kalman_filter(y_star: np.ndarray, s: np.ndarray, alpha: float, beta: float, 
     return {"a": a, "P": P, "a_pred": a_pred, "P_pred": P_pred}
 
 
-def ffbs_sample_h(y_star: np.ndarray, s: np.ndarray, alpha: float, beta: float, tau2: float, rng: np.random.Generator) -> np.ndarray:
+def ffbs_sample_h(
+    y_star: np.ndarray,
+    s: np.ndarray,
+    alpha: float,
+    beta: float,
+    tau2: float,
+    rng: np.random.Generator,
+    gamma: Optional[np.ndarray],
+    exog: Optional[np.ndarray],
+) -> np.ndarray:
     """
     使用 Carter-Kohn FFBS 算法一次性采样 h_{1:T}。
     """
     T = len(y_star)
-    filt = kalman_filter(y_star, s, alpha, beta, tau2)
+    filt = kalman_filter(y_star, s, alpha, beta, tau2, gamma, exog)
     a = filt["a"]
     P = filt["P"]
     a_pred = filt["a_pred"]
