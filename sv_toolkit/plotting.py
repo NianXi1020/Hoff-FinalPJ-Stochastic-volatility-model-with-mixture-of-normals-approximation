@@ -200,13 +200,20 @@ def plot_intraday_pattern(df, output_dir: Path, title_suffix: str = "sample") ->
 
 
 def plot_param_posterior(samples: Dict[str, np.ndarray], output_dir: Path, title_suffix: str = "sample") -> Path:
-    """绘制 mu/alpha/beta/tau2 的 trace 与后验直方图。"""
+    """绘制 mu/alpha/beta/tau2 及可选 gamma 的 trace 与后验直方图。"""
     _ensure_dir(output_dir)
-    params = ["mu", "alpha", "beta", "tau2"]
-    fig, axes = plt.subplots(len(params), 2, figsize=(12, 8))
+    base_params = ["mu", "alpha", "beta", "tau2"]
+    chains = [(name, samples.get(name)) for name in base_params]
 
-    for i, name in enumerate(params):
-        chain = samples.get(name)
+    gamma_chain = samples.get("gamma")
+    if gamma_chain is not None and gamma_chain.size > 0:
+        gamma_chain = np.atleast_2d(gamma_chain)
+        for idx in range(gamma_chain.shape[1]):
+            chains.append((f"gamma_{idx+1}", gamma_chain[:, idx]))
+
+    fig, axes = plt.subplots(len(chains), 2, figsize=(12, 2 * len(chains)))
+
+    for i, (name, chain) in enumerate(chains):
         ax_trace = axes[i, 0]
         ax_trace.plot(chain, linewidth=0.6)
         ax_trace.set_title(f"Trace of {name} ({title_suffix})")

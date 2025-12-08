@@ -46,13 +46,27 @@ def save_param_summary(samples: Dict[str, np.ndarray], output_dir: Path, contrac
     beta_chain = samples["beta"]
     tau2_chain = samples["tau2"]
 
+    rows = [
+        ("mu", mu_chain),
+        ("alpha", alpha_chain),
+        ("beta", beta_chain),
+        ("tau2", tau2_chain),
+    ]
+
+    gamma_chain = samples.get("gamma")
+    if gamma_chain is not None and gamma_chain.size > 0:
+        gamma_chain = np.atleast_2d(gamma_chain)
+        for idx in range(gamma_chain.shape[1]):
+            rows.append((f"gamma_{idx+1}", gamma_chain[:, idx]))
+
     summary = {
-        "param": ["mu", "alpha", "beta", "tau2"],
-        "post_mean": [mu_chain.mean(), alpha_chain.mean(), beta_chain.mean(), tau2_chain.mean()],
-        "post_sd": [mu_chain.std(), alpha_chain.std(), beta_chain.std(), tau2_chain.std()],
-        "q2.5": [np.quantile(mu_chain, 0.025), np.quantile(alpha_chain, 0.025), np.quantile(beta_chain, 0.025), np.quantile(tau2_chain, 0.025)],
-        "q97.5": [np.quantile(mu_chain, 0.975), np.quantile(alpha_chain, 0.975), np.quantile(beta_chain, 0.975), np.quantile(tau2_chain, 0.975)],
+        "param": [name for name, _ in rows],
+        "post_mean": [chain.mean() for _, chain in rows],
+        "post_sd": [chain.std() for _, chain in rows],
+        "q2.5": [np.quantile(chain, 0.025) for _, chain in rows],
+        "q97.5": [np.quantile(chain, 0.975) for _, chain in rows],
     }
+
     df_summary = pd.DataFrame(summary)
     csv_path = output_dir / f"params_{contract_tag}.csv"
     df_summary.to_csv(csv_path, index=False)
