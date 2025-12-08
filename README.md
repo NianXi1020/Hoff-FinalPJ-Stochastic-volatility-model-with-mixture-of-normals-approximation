@@ -9,8 +9,9 @@ a subset of rows so that experiments stay lightweight.
 ## Data placement
 
 - Place all CSVs under a directory named `2005年__20250905` that sits alongside
-  the repo root. When you start Jupyter inside `notebooks/`, the default path
-  used by the demo notebook is `../2005年__20250905`.
+  the repo root. When you start Jupyter from the repo root (the notebook now
+  lives beside `sv_toolkit/`), the default path used by the demo notebook is
+  `../2005年__20250905`.
 - Filenames are expected to start with the English contract code followed by an
   underscore (e.g., `AG_主力合约_1m数据.csv`, `BU_主力合约_1m数据.csv`). The code
   before the first underscore becomes the contract tag (e.g., `AG`, `BU`) used
@@ -18,7 +19,7 @@ a subset of rows so that experiments stay lightweight.
 
 ## Key files
 
-- `notebooks/sv_mixture_demo.ipynb`: guided workflow with Chinese comments,
+- `sv_mixture_demo.ipynb`: guided workflow with Chinese comments,
   English print statements/plot labels, and progress prints. It loads multiple
   contracts in one run, loops over them with separate RNG seeds, and writes
   each contract's outputs into its own subfolder under the timestamped root.
@@ -33,7 +34,7 @@ a subset of rows so that experiments stay lightweight.
 
 ## Quickstart (single contract via notebook)
 
-1. Launch Jupyter and open `notebooks/sv_mixture_demo.ipynb`.
+1. Launch Jupyter and open `sv_mixture_demo.ipynb` (now in the repo root).
 2. Verify the first cell has `data_dir = Path('../2005年__20250905')` (default).
 3. Adjust the sampling controls in the first code cell:
    - `max_files`: limit how many CSVs to read (start with `1`).
