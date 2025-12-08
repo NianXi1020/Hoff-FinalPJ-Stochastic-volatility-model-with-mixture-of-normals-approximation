@@ -1,12 +1,11 @@
-"""绘图函数，标题与图例使用英文，并处理时间轴空档问题。"""
-
+"""绘图函数，标题与图例使用英文。"""
 from pathlib import Path
 from typing import Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import seaborn as sns
+import pandas as pd
 from scipy import stats
 
 from .mixture import Q
@@ -19,74 +18,23 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _prepare_axis(
-    time_index: pd.Series,
-    use_step_index: bool = True,
-    max_labels: int = 8,
-):
-    """构造横轴刻度与标签，默认使用交易步数避免时间空档导致的长直线。
-
-    返回 (x_axis, tick_locs, tick_labels)，供后续绘图函数统一使用。
-    """
-
-    times = pd.to_datetime(time_index)
-    n = len(times)
-    if n == 0:
-        return np.array([]), np.array([]), []
-
-    x_axis = np.arange(n) if use_step_index else times.to_numpy()
-    step = max(1, n // max_labels)
-    tick_locs = np.arange(0, n, step)
-    tick_labels = [times.iloc[i].strftime("%Y-%m-%d %H:%M") for i in tick_locs]
-    return x_axis, tick_locs, tick_labels
-
-
-def _iter_segments(
-    times: pd.Series, use_step_index: bool = True, max_gap_minutes: int = 180
-):
-    """按时间空档切分连续区间。use_step_index=True 时只返回全量切片。"""
-
-    if use_step_index:
-        yield slice(None)
-        return
-
-    ts = pd.to_datetime(times)
-    if len(ts) == 0:
-        return
-
-    gap = pd.Timedelta(minutes=max_gap_minutes)
-    start = 0
-    for i in range(len(ts) - 1):
-        if ts.iloc[i + 1] - ts.iloc[i] > gap:
-            yield slice(start, i + 1)
-            start = i + 1
-    yield slice(start, len(ts))
-
-
-def plot_returns(
-    df,
-    output_dir: Path,
-    title_suffix: str = "sample",
-    use_step_index: bool = True,
-    max_gap_minutes: int = 180,
-    max_xticks: int = 8,
-) -> Path:
-    """绘制收益率随时间变化图，默认使用交易步数横轴避免休市空档产生突变。"""
+def plot_returns(df, output_dir: Path, title_suffix: str = "sample") -> Path:
+    """绘制收益率随时间变化图，自动在停盘/周末断线，保存 PNG 文件。"""
     _ensure_dir(output_dir)
+    time_index = df["index"].values
+    r = df["r"].values
+
+    # 重建规则时间网格，并在缺数据处插入 NaN，避免跨夜画斜线
+    time_reg, series_reg = _regularize_time_series(time_index, {"r": r})
+    r_reg = series_reg["r"]
+
     fig, ax = plt.subplots(figsize=(10, 4))
-
-    x_axis, tick_locs, tick_labels = _prepare_axis(
-        df["index"], use_step_index=use_step_index, max_labels=max_xticks
-    )
-    for seg in _iter_segments(df["index"], use_step_index=use_step_index, max_gap_minutes=max_gap_minutes):
-        ax.plot(x_axis[seg], df["r"].values[seg], color="tab:blue", linewidth=0.8, label="returns" if seg.start == 0 else None)
-
+    ax.plot(time_reg, r_reg, color="tab:blue", linewidth=0.8, label="returns")
     ax.set_title(f"Returns over time ({title_suffix})")
-    ax.set_xlabel("Trading step" if use_step_index else "Time")
+    ax.set_xlabel("Time")
     ax.set_ylabel("Return")
     ax.legend()
-    ax.set_xticks(x_axis[tick_locs])
-    ax.set_xticklabels(tick_labels, rotation=45, ha="right")
+    fig.autofmt_xdate()
 
     output_path = output_dir / f"returns_{title_suffix}.png"
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -94,37 +42,81 @@ def plot_returns(
     return output_path
 
 
-def plot_volatility(
-    h_samples: np.ndarray,
-    df,
-    output_dir: Path,
-    title_suffix: str = "sample",
-    use_step_index: bool = True,
-    max_gap_minutes: int = 180,
-    max_xticks: int = 8,
-) -> Path:
-    """使用后验均值与置信区间绘制条件波动率轨迹。"""
+def _infer_time_freq(time_index: np.ndarray) -> Optional[pd.Timedelta]:
+    """根据时间索引推断一个“典型频率”（取最常见的相邻差值）。"""
+    if len(time_index) < 2:
+        return None
+    idx = pd.DatetimeIndex(time_index)
+    diffs = idx[1:] - idx[:-1]
+    if len(diffs) == 0:
+        return None
+    # 取众数（最常见的时间间隔），避免偶尔的缺失点干扰
+    freq = pd.Series(diffs).mode().iloc[0]
+    if freq <= pd.Timedelta(0):
+        return None
+    return freq
+
+
+def _regularize_time_series(
+    time_index: np.ndarray,
+    series_dict: Dict[str, np.ndarray],
+    freq: Optional[pd.Timedelta] = None,
+) -> (np.ndarray, Dict[str, np.ndarray]):
+    """
+    给定时间索引和若干同长度序列，扩展到规则时间网格并用 NaN 填补缺失点。
+    返回新的时间索引和同名的序列字典。
+    """
+    if len(time_index) == 0:
+        return time_index, series_dict
+
+    if freq is None:
+        freq = _infer_time_freq(time_index)
+    if freq is None:
+        # 无法推断频率时，原样返回
+        return time_index, series_dict
+
+    idx = pd.DatetimeIndex(time_index)
+    full_index = pd.date_range(idx.min(), idx.max(), freq=freq)
+
+    out_dict: Dict[str, np.ndarray] = {}
+    for name, values in series_dict.items():
+        s = pd.Series(values, index=idx)
+        s_full = s.reindex(full_index)
+        out_dict[name] = s_full.to_numpy()
+
+    return full_index.to_pydatetime(), out_dict
+
+
+def plot_volatility(h_samples: np.ndarray, df, output_dir: Path, title_suffix: str = "sample") -> Path:
+    """使用后验均值与置信区间绘制条件波动率轨迹，在停盘区间断线。"""
     _ensure_dir(output_dir)
     vol_mean = np.exp(h_samples.mean(axis=0) / 2)
     vol_low = np.exp(np.percentile(h_samples, 2.5, axis=0) / 2)
     vol_high = np.exp(np.percentile(h_samples, 97.5, axis=0) / 2)
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    x_axis, tick_locs, tick_labels = _prepare_axis(
-        df["index"], use_step_index=use_step_index, max_labels=max_xticks
-    )
-    for seg in _iter_segments(df["index"], use_step_index=use_step_index, max_gap_minutes=max_gap_minutes):
-        ax.plot(x_axis[seg], vol_mean[seg], color="tab:orange", label="Posterior mean volatility" if seg.start == 0 else None)
-        ax.fill_between(
-            x_axis[seg], vol_low[seg], vol_high[seg], color="tab:orange", alpha=0.2, label="95% CI" if seg.start == 0 else None
-        )
+    time_index = df["index"].values
 
+    # 对波动率三个序列一起做规则化，保证同一时间网格
+    time_reg, series_reg = _regularize_time_series(
+        time_index,
+        {
+            "vol_mean": vol_mean,
+            "vol_low": vol_low,
+            "vol_high": vol_high,
+        },
+    )
+    vol_mean_reg = series_reg["vol_mean"]
+    vol_low_reg = series_reg["vol_low"]
+    vol_high_reg = series_reg["vol_high"]
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(time_reg, vol_mean_reg, color="tab:orange", label="Posterior mean volatility")
+    ax.fill_between(time_reg, vol_low_reg, vol_high_reg, color="tab:orange", alpha=0.2, label="95% CI")
     ax.set_title(f"Latent volatility ({title_suffix})")
-    ax.set_xlabel("Trading step" if use_step_index else "Time")
+    ax.set_xlabel("Time")
     ax.set_ylabel("Volatility")
     ax.legend()
-    ax.set_xticks(x_axis[tick_locs])
-    ax.set_xticklabels(tick_labels, rotation=45, ha="right")
+    fig.autofmt_xdate()
 
     output_path = output_dir / f"volatility_{title_suffix}.png"
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -234,36 +226,36 @@ def plot_param_posterior(samples: Dict[str, np.ndarray], output_dir: Path, title
     return output_path
 
 
-def plot_vol_and_abs_returns(
-    h_samples: np.ndarray,
-    df,
-    output_dir: Path,
-    title_suffix: str = "sample",
-    use_step_index: bool = True,
-    max_gap_minutes: int = 180,
-    max_xticks: int = 8,
-) -> Path:
-    """将潜在波动率与绝对收益同图展示，突出聚集特征。"""
+def plot_vol_and_abs_returns(h_samples: np.ndarray, df, output_dir: Path, title_suffix: str = "sample") -> Path:
+    """将潜在波动率与绝对收益同图展示，突出聚集特征，并在时间缺口处断线。"""
     _ensure_dir(output_dir)
     h_mean = h_samples.mean(axis=0)
     vol_mean = np.exp(h_mean / 2.0)
     abs_r = df["r"].abs().values
+    # 缩放后的 |r|，避免量纲差太大
     scaled_abs_r = abs_r / np.median(abs_r)
 
-    fig, ax1 = plt.subplots(figsize=(10, 4))
-    x_axis, tick_locs, tick_labels = _prepare_axis(
-        df["index"], use_step_index=use_step_index, max_labels=max_xticks
-    )
-    for seg in _iter_segments(df["index"], use_step_index=use_step_index, max_gap_minutes=max_gap_minutes):
-        ax1.plot(x_axis[seg], vol_mean[seg], label="Posterior mean vol" if seg.start == 0 else None, color="tab:orange")
-        ax1.plot(x_axis[seg], scaled_abs_r[seg], alpha=0.45, label="Scaled |returns|" if seg.start == 0 else None, color="tab:blue")
+    time_index = df["index"].values
 
-    ax1.set_xlabel("Trading step" if use_step_index else "Time")
+    # 对两个序列一起扩展到规则时间网格
+    time_reg, series_reg = _regularize_time_series(
+        time_index,
+        {
+            "vol_mean": vol_mean,
+            "scaled_abs_r": scaled_abs_r,
+        },
+    )
+    vol_mean_reg = series_reg["vol_mean"]
+    scaled_abs_r_reg = series_reg["scaled_abs_r"]
+
+    fig, ax1 = plt.subplots(figsize=(10, 4))
+    ax1.plot(time_reg, vol_mean_reg, label="Posterior mean vol", color="tab:orange")
+    ax1.plot(time_reg, scaled_abs_r_reg, alpha=0.45, label="Scaled |returns|", color="tab:blue")
+    ax1.set_xlabel("Time")
     ax1.set_ylabel("Value")
     ax1.set_title(f"Volatility vs |returns| ({title_suffix})")
     ax1.legend()
-    ax1.set_xticks(x_axis[tick_locs])
-    ax1.set_xticklabels(tick_labels, rotation=45, ha="right")
+    fig.autofmt_xdate()
 
     fig.tight_layout()
     output_path = output_dir / f"vol_abs_{title_suffix}.png"
