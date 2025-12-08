@@ -19,6 +19,7 @@ from .data import (
 from .garch import fit_arch_q, fit_garch_11
 from .mcmc import run_mcmc_sv
 from .exog_sv import prepare_exog_series, run_sv_with_exog, zscore_series
+from .exog_multi import prepare_multi_exog
 from .plotting import *  # noqa: F401,F403
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "fit_arch_q",
     "fit_garch_11",
     "prepare_exog_series",
+    "prepare_multi_exog",
     "get_contract_symbol_from_path",
     "list_csv_files",
     "load_contracts_in_dir",
